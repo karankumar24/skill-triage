@@ -20,11 +20,11 @@ Trivial tasks collapse to a one-line "no skill needed". Destructive tasks always
 
 **Cold start.** If you have no skills installed, or none match the task, skill-triage falls back to web discovery. It searches a small allow-list of curated registries first (`anthropics/skills`, `travisvn/awesome-claude-skills`, `hesreallyhim/awesome-claude-code`), then a verified `WebSearch` if needed. Every candidate URL is fetched and checked for an actual `SKILL.md` before being suggested. No invented skill names. Output caps at 3 candidates with a copy-paste install command.
 
-Task keywords (not the raw task) are scrubbed before any web call — see [SECURITY.md](SECURITY.md).
+Task keywords (not the raw task) are scrubbed before any web call. See [SECURITY.md](SECURITY.md).
 
 ## Why it exists
 
-Claude already loads skill metadata at session start. The problem is not discovery — it is selection. With a hundred skills installed, the auto-trigger heuristics fire too eagerly. A task that needs one planner ends up running a planner, a designer, a reviewer, and a "ship" skill in sequence. Not routing. Thrash.
+Claude already loads skill metadata at session start. The problem is not discovery, it is selection. With a hundred skills installed, the auto-trigger heuristics fire too eagerly. A task that needs one planner ends up running a planner, a designer, a reviewer, and a "ship" skill in sequence. Not routing. Thrash.
 
 skill-triage enforces a budget: at most 0–5 relevant skills per task by tier, one skill per role (one planner, one reviewer, one designer). Every contender that did not make the cut is named under "Avoid" with a reason.
 
@@ -56,7 +56,7 @@ Verify the scanner runs:
 bash ~/.claude/skills/skill-triage/scripts/scan-skills.sh | head
 ```
 
-You should see one line per installed skill: `name|source|description`. On a brand-new install with no other skills, this prints just the `skill-triage` line — that is expected.
+You should see one line per installed skill: `name|source|description`. On a brand-new install with no other skills, this prints just the `skill-triage` line. That is expected.
 
 ## Example output
 
@@ -70,10 +70,10 @@ User asks: *"the staging database has stale test rows in events, sessions, and a
 **Risk flags:** destructive, irreversible
 
 **Relevant skills:**
-- `careful` — wraps destructive commands with a confirmation gate
+- `careful` (wraps destructive commands with a confirmation gate)
 
 **Avoid:**
-- a generic plan-execute skill — bypasses the safety conversation
+- a generic plan-execute skill (bypasses the safety conversation)
 
 **Recommended order:**
 1. **pre:** verify staging is staging (not prod), confirm zero downstream readers
@@ -82,12 +82,12 @@ User asks: *"the staging database has stale test rows in events, sessions, and a
 **Verdict:** stop and ask
 ```
 
-skill-triage then recommends Claude opens an `AskUserQuestion` with three concrete options (dry-run with row counts, proceed after backup, abort) before running anything. The skill is advisory — it does not block tool calls. The caller decides whether to honor the gate.
+skill-triage then recommends Claude opens an `AskUserQuestion` with three concrete options (dry-run with row counts, proceed after backup, abort) before running anything. The skill is advisory. It does not block tool calls. The caller decides whether to honor the gate.
 
 ## How it works
 
 1. Reads the task, the project `CLAUDE.md` if loaded, and `git status` / `git log -5` (skipped if not a git repo). Nothing else at this stage.
-2. Classifies complexity on a 4-tier rubric. Risk and complexity are orthogonal — a one-line `DROP TABLE` is `high-risk`, not `simple`.
+2. Classifies complexity on a 4-tier rubric. Risk and complexity are orthogonal. A one-line `DROP TABLE` is `high-risk`, not `simple`.
 3. Runs the bundled scanner (`scripts/scan-skills.sh`) which reads SKILL.md frontmatter from `~/.claude/skills/`, `~/.claude/plugins/cache/*/`, and `.claude/skills/`. Cached for 10 minutes per-UID under `${XDG_CACHE_HOME:-$HOME/.cache}/skill-triage/`.
 4. Filters by keyword overlap, ranks 0–10 candidates, reads full SKILL.md only for the top 1–3 finalists. Resolves role conflicts.
 5. Applies the skill budget. Cuts excess relevant skills to "Avoid" with reasons.
@@ -105,7 +105,7 @@ The full algorithm and design rationale live in [`skills/skill-triage/SKILL.md`]
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome. Additions should justify the complexity they add — the 4-tier rubric and the skill budget are load-bearing.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome. Additions should justify the complexity they add. The 4-tier rubric and the skill budget are load-bearing.
 
 ## Security
 
@@ -118,4 +118,4 @@ Apache License 2.0. See [LICENSE](LICENSE).
 ## Related
 
 - [Claude Code skills documentation](https://docs.claude.com/en/docs/claude-code/skills)
-- [anthropics/skills](https://github.com/anthropics/skills) — the official skills repo and template
+- [anthropics/skills](https://github.com/anthropics/skills): the official skills repo and template
