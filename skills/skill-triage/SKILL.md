@@ -1,11 +1,11 @@
 ---
 name: skill-triage
-description: Triage installed Claude Code skills against a task and emit a routing plan — which skill to use, in what order, what to avoid, and whether to ask before proceeding. Falls back to web discovery when no installed skill matches. Use before any non-trivial task (3+ steps, architectural decision, or anything destructive) and when the user asks "what's the best way to…", "should I use a skill for this", or "help me decide which skill". Skip for trivial single-step edits.
+description: Pick the right Claude Code skill for a task. Ranks installed skills, emits a routing plan, and falls back to web discovery if nothing matches. Use before non-trivial tasks (3+ steps, architectural decisions, or destructive operations).
 ---
 
 # Skill Triage
 
-Routing meta-skill. Decides **how** to approach a task. Prefers skills the user already has installed; only when zero installed skills match the task does it search a small allow-list of curated registries (and, as a last resort, the open web with URL verification) to suggest skills the user could install. Never recommends an installed skill just because it exists.
+Routing meta-skill. Decides how to approach a task. Prefers skills the user already has installed. When nothing matches, searches a short allow-list of curated registries (and, as a last resort, the open web with URL verification) to suggest skills the user could install. Never recommends an installed skill just because it exists.
 
 ## What this skill does
 
@@ -46,7 +46,7 @@ When the answer is "no skill needed," collapse to a single line — do not pad t
 Pull only what's already free or one shell call away:
 - The user's task wording (verbatim — do not paraphrase before classifying)
 - Project `CLAUDE.md` if loaded in context (already in system reminder)
-- `git status` and `git log -5 --oneline` (one bash call each, parallel)
+- `git status` and `git log -5 --oneline` (one bash call each, parallel; skip if not a git repo)
 
 Do **not** read source files, config, or other directories at this stage. Cheap context only.
 
@@ -68,10 +68,14 @@ A "simple" task that drops a prod table is **high-risk**.
 Run the bundled scanner. It reads SKILL.md frontmatter only (cheap), caches for 10 min, and emits one line per skill: `name|source|description`.
 
 ```bash
-bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/skill-triage}/scripts/scan-skills.sh"
+bash ~/.claude/skills/skill-triage/scripts/scan-skills.sh
 ```
 
-Source is `personal`, `plugin:<name>`, or `project`. If a skill was just installed, pass `--refresh` to bust the cache.
+Source is `personal`, `plugin:<name>`, or `project`. If a skill was just installed, pass `--refresh` to bust the cache:
+
+```bash
+bash ~/.claude/skills/skill-triage/scripts/scan-skills.sh --refresh
+```
 
 ### Step 4 — Triage
 
@@ -110,19 +114,25 @@ Trigger this step **only** when one of the following is true after Step 4b:
 
 Otherwise skip this step entirely.
 
-When triggered, search for skills the user could install. Use this allow-list **first**, in order:
+**Privacy first.** Before any web call, scrub the task to safe keywords. Drop emails, names, IDs, file paths, URLs, hostnames, secrets, and any quoted user data. Send only generic terms (e.g., for "delete the user with email foo@bar.com from prod" send `database delete row`). The user's raw task must not leave the machine.
+
+Search for skills the user could install. Use this allow-list **first**, in order:
 
 1. `https://raw.githubusercontent.com/anthropics/skills/main/README.md` — official Anthropic skills repo
 2. `https://raw.githubusercontent.com/travisvn/awesome-claude-skills/main/README.md` — community awesome list
 3. `https://raw.githubusercontent.com/hesreallyhim/awesome-claude-code/main/README.md` — community awesome list
 
-Use `WebFetch` on each. Extract candidate skills whose name + description overlap with the task. If the allow-list yields nothing useful, fall back to `WebSearch` with the query:
+Use `WebFetch` on each. If a `main`-branch URL returns 404 or empty content, retry once with `master` in place of `main`. Extract candidate skills whose name + description overlap with the (scrubbed) task keywords. If the allow-list yields nothing useful, fall back to `WebSearch` with the (scrubbed) query:
 
 ```
-claude code skill <task keywords> site:github.com
+claude code skill <safe keywords> site:github.com
 ```
 
-For every candidate from `WebSearch`, **verify** before suggesting: fetch the candidate's repo URL and confirm a `SKILL.md` file exists. Reject any candidate whose URL 404s, whose repo lacks a `SKILL.md` at any standard location (`SKILL.md`, `skills/<name>/SKILL.md`, or similar), or whose name was not found verbatim in the page content. Never invent a skill name.
+For every candidate from either path, **verify** before suggesting:
+
+- `WebFetch` `https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md`. If 404, try `https://raw.githubusercontent.com/<owner>/<repo>/main/skills/<skill-name>/SKILL.md`, then the same two paths on the `master` branch.
+- If all four 404, drop the candidate. Never invent a name.
+- Reject any candidate whose name contains shell metacharacters (`spaces`, `;`, `|`, `&`, backticks, `$`, `(`, `)`).
 
 Cap discovery output at **3** suggestions. One per role.
 
@@ -134,15 +144,25 @@ Emit using this template (instead of the regular routing plan):
 No installed skill matches this task. Verified candidates from the web:
 
 - **<skill-name>** ([repo](<github-url>)) — <one-line description from the source>
-  - Install: `git clone <repo-url> /tmp/<skill-name> && mkdir -p ~/.claude/skills && cp -r /tmp/<skill-name>/skills/<skill-name> ~/.claude/skills/ && chmod +x ~/.claude/skills/<skill-name>/scripts/*.sh 2>/dev/null || true`
-  - Source: <anthropics/skills | travisvn/awesome-claude-skills | hesreallyhim/awesome-claude-code | web search>
+  - Install:
+    ```
+    SKILL=<skill-name>
+    DIR=$(mktemp -d) && git clone --depth 1 <repo-url> "$DIR" \
+      && mkdir -p ~/.claude/skills \
+      && cp -r "$DIR/skills/$SKILL" ~/.claude/skills/ \
+      && rm -rf "$DIR"
+    ```
+  - Source: <anthropics/skills | travisvn/awesome-claude-skills | hesreallyhim/awesome-claude-code | web-search:<owner>/<repo>>
+  - Note: third-party skill — review its SKILL.md and any bundled scripts before running.
 
 **Verdict:** install one of the above and re-run skill-triage, or `proceed directly` without a skill.
 ```
 
+If the upstream repo's directory layout differs from `skills/<name>/` (some community repos place `SKILL.md` at the root), say so in the suggestion and link the repo's README instead of emitting a possibly-wrong install command.
+
 If discovery itself returns nothing usable, fall through to a plain `proceed directly` verdict — do not invent suggestions.
 
-**Discovery is opt-out for the user.** If they have explicitly disabled web access, or if `WebFetch`/`WebSearch` are not available in the current environment, skip this step and emit the plain `proceed directly` verdict.
+**Tool availability.** `WebFetch` and `WebSearch` may not exist in every Claude Code environment. Try them; on tool error, fall through to `proceed directly`. Do not retry, do not error-out.
 
 ### Step 5 — Risk gate
 
@@ -190,6 +210,8 @@ Use this exact template. The "no skill needed" case uses the short form below; n
 
 If verdict is **stop and ask**, immediately follow the recommendation with an `AskUserQuestion` call. Options should be concrete and mutually exclusive — never "proceed / abort" alone; include a middle path like "dry-run first" or "narrow scope to X."
 
+If `AskUserQuestion` is not available in the current environment (some non-Claude-Code agents), ask in plain text and wait for a reply before doing anything irreversible.
+
 If verdict is **proceed with skill(s)**, do **not** ask — just execute the first recommended skill.
 
 If verdict is **proceed directly**, do not ask, do not invoke a skill.
@@ -212,7 +234,7 @@ If verdict is **proceed directly**, do not ask, do not invoke a skill.
 
 ## Examples
 
-Skill names below are illustrative. Substitute against whatever the scanner emits on the user's machine.
+> **Note.** Skill names in these examples (`writing-plans`, `careful`, `frontend-design`, `review`, `ship`, `brainstorming`) are placeholders. Substitute with whatever the scanner emits on the user's machine. If a placeholder skill is not installed, drop it from the recommendation — do not pretend it exists.
 
 ### Example 1 — medium task, single skill
 
@@ -318,11 +340,12 @@ User: "I want to ship a new dashboard page that pulls from our analytics warehou
 
 ## Bundled resources
 
-- `scripts/scan-skills.sh` — frontmatter-only scanner across personal / plugin / project skill dirs. Cached 10 min in `${TMPDIR:-/tmp}/skill-triage-cache.$UID.tsv`. Pass `--refresh` to rescan.
+- `scripts/scan-skills.sh` — frontmatter-only scanner across personal / plugin / project skill dirs. Cached 10 min per-UID under `${XDG_CACHE_HOME:-$HOME/.cache}/skill-triage/`. Pass `--refresh` to rescan.
 - `examples/examples.json` — illustrative test prompts for iterating on this skill.
 
 ## Limitations
 
-- The scanner uses an `awk` YAML parser — naive on quoted strings, escaped colons, and multi-line folded blocks. Most real-world SKILL.md files parse fine; pathological ones may misparse the description field.
+- The scanner uses an `awk` YAML parser. It handles `description:`, `description: |`, `description: >`, and the `|-` / `>-` chomp variants, plus quoted forms. Adversarial frontmatter may still misparse — restrict to what's between the leading `---` delimiters.
 - Plugin discovery assumes the default `~/.claude/plugins/cache/<plugin>/` layout. Custom plugin install paths will not be picked up.
+- The discovery fallback sends scrubbed task keywords to GitHub raw URLs and (as a last resort) a `WebSearch` query. Raw user-task text is never sent. See SECURITY.md.
 - Linux + macOS supported. Windows untested.

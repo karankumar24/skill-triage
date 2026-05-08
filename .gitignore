@@ -1,6 +1,14 @@
 .DS_Store
 *.tsv
+*.psv
 *.swp
+*.bak
+*.orig
+*.log
 .idea/
 .vscode/
+.env*
+node_modules/
+__pycache__/
+tasks/
 PROMOTION.md
