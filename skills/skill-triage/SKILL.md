@@ -1,11 +1,11 @@
 ---
 name: skill-triage
-description: Triage installed Claude Code skills against a task and emit a routing plan — which skill to use, in what order, what to avoid, and whether to ask before proceeding. Use before any non-trivial task (3+ steps, architectural decision, or anything destructive) and when the user asks "what's the best way to…", "should I use a skill for this", or "help me decide which skill". Skip for trivial single-step edits.
+description: Triage installed Claude Code skills against a task and emit a routing plan — which skill to use, in what order, what to avoid, and whether to ask before proceeding. Falls back to web discovery when no installed skill matches. Use before any non-trivial task (3+ steps, architectural decision, or anything destructive) and when the user asks "what's the best way to…", "should I use a skill for this", or "help me decide which skill". Skip for trivial single-step edits.
 ---
 
 # Skill Triage
 
-Routing meta-skill. Decides **how** to approach a task using only the skills the user already has installed. Never recommends a skill just because it exists. Never invents skills. Never searches the web for new ones.
+Routing meta-skill. Decides **how** to approach a task. Prefers skills the user already has installed; only when zero installed skills match the task does it search a small allow-list of curated registries (and, as a last resort, the open web with URL verification) to suggest skills the user could install. Never recommends an installed skill just because it exists.
 
 ## What this skill does
 
@@ -101,6 +101,49 @@ After triage, check your "Relevant skills" list against this budget by complexit
 
 A router that lists 8 plausible skills is not routing — it is a directory dump. The user can read the directory themselves. The value is the cut.
 
+### Step 4c — Discovery fallback (when nothing matches)
+
+Trigger this step **only** when one of the following is true after Step 4b:
+
+- The scanner returned zero skills (new Claude Code user, no skills installed).
+- The scanner returned skills but none match the task by keyword + role fit.
+
+Otherwise skip this step entirely.
+
+When triggered, search for skills the user could install. Use this allow-list **first**, in order:
+
+1. `https://raw.githubusercontent.com/anthropics/skills/main/README.md` — official Anthropic skills repo
+2. `https://raw.githubusercontent.com/travisvn/awesome-claude-skills/main/README.md` — community awesome list
+3. `https://raw.githubusercontent.com/hesreallyhim/awesome-claude-code/main/README.md` — community awesome list
+
+Use `WebFetch` on each. Extract candidate skills whose name + description overlap with the task. If the allow-list yields nothing useful, fall back to `WebSearch` with the query:
+
+```
+claude code skill <task keywords> site:github.com
+```
+
+For every candidate from `WebSearch`, **verify** before suggesting: fetch the candidate's repo URL and confirm a `SKILL.md` file exists. Reject any candidate whose URL 404s, whose repo lacks a `SKILL.md` at any standard location (`SKILL.md`, `skills/<name>/SKILL.md`, or similar), or whose name was not found verbatim in the page content. Never invent a skill name.
+
+Cap discovery output at **3** suggestions. One per role.
+
+Emit using this template (instead of the regular routing plan):
+
+```markdown
+## Discovery suggestion
+
+No installed skill matches this task. Verified candidates from the web:
+
+- **<skill-name>** ([repo](<github-url>)) — <one-line description from the source>
+  - Install: `git clone <repo-url> /tmp/<skill-name> && mkdir -p ~/.claude/skills && cp -r /tmp/<skill-name>/skills/<skill-name> ~/.claude/skills/ && chmod +x ~/.claude/skills/<skill-name>/scripts/*.sh 2>/dev/null || true`
+  - Source: <anthropics/skills | travisvn/awesome-claude-skills | hesreallyhim/awesome-claude-code | web search>
+
+**Verdict:** install one of the above and re-run skill-triage, or `proceed directly` without a skill.
+```
+
+If discovery itself returns nothing usable, fall through to a plain `proceed directly` verdict — do not invent suggestions.
+
+**Discovery is opt-out for the user.** If they have explicitly disabled web access, or if `WebFetch`/`WebSearch` are not available in the current environment, skip this step and emit the plain `proceed directly` verdict.
+
 ### Step 5 — Risk gate
 
 If the task is **high-risk**, the verdict is **stop and ask** — even if a skill perfectly matches. Use `AskUserQuestion` with concrete options (proceed / dry-run first / abort) before doing anything irreversible. Quote the destructive command verbatim in the question.
@@ -154,6 +197,8 @@ If verdict is **proceed directly**, do not ask, do not invoke a skill.
 ## Design principles (read these — they explain the *why*)
 
 **Conservative by default.** Most tasks need 0-1 skills, not 3. The triage exists to *prevent* skill thrash, not justify it. If you are recommending 4+ skills for a single task, you are wrong — re-read the task.
+
+**Installed skills first, web second.** The default mode is to route among what the user already has. The web discovery fallback exists only because a brand-new install of skill-triage on a machine with no other skills would otherwise be useless. Discovery is the cold-start fix, not the main loop.
 
 **Don't blow context.** The scanner returns ~300 skill descriptions in a few KB. Do not `Read` every SKILL.md — only the 1-3 finalists. Progressive disclosure means triage on metadata first.
 
@@ -264,7 +309,9 @@ User: "I want to ship a new dashboard page that pulls from our analytics warehou
 - Do not recommend a skill-creator skill unless the user explicitly wants a new skill.
 - Do not recommend more than one skill per role (one planner, one reviewer, etc.).
 - Do not silently omit a strong candidate — list it under "Avoid" with a reason.
-- Do not invent slash commands. Verify the skill exists in the scanner output before suggesting `/<name>`.
+- Do not invent slash commands. Verify the skill exists in the scanner output (or, in discovery fallback, on a verified web URL) before suggesting `/<name>`.
+- Do not run discovery fallback when the scanner already returned at least one matching skill. The fallback is for empty-result cases only.
+- Do not invent or hallucinate skill names from `WebSearch` results. If the candidate URL 404s or its repo has no `SKILL.md`, drop it.
 - Do not enter plan mode. Leave that to the caller's configuration.
 - Do not paraphrase destructive commands. Quote them.
 - Do not run on follow-up turns inside an existing skill flow — would duplicate routing.

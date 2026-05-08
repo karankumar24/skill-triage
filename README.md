@@ -18,6 +18,8 @@ Given a task, `skill-triage` produces:
 
 Trivial tasks collapse to a one-line "no skill needed" and proceed directly. Destructive tasks always stop and ask, even when a skill matches.
 
+**Cold start.** If you have no skills installed yet, or none of yours match the task, skill-triage falls back to web discovery. It searches a small allow-list of curated registries first (`anthropics/skills`, `travisvn/awesome-claude-skills`, `hesreallyhim/awesome-claude-code`), then a verified `WebSearch` if needed. Every candidate URL is verified to exist and to contain a `SKILL.md` before being suggested — no invented skill names. Output is up to 3 candidates with copy-paste install commands.
+
 ## Why it exists
 
 Claude already auto-loads skill metadata at session start. The problem is not discovery — it's selection. With 100+ skills installed, the auto-trigger heuristics fire too eagerly: a task that needs one planning skill ends up running a planner, a designer, a reviewer, and a "ship" skill in sequence. That is not routing, it is thrash.

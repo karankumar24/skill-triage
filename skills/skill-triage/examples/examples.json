@@ -31,6 +31,20 @@
       "name": "ambiguous-requires-pre",
       "prompt": "the app feels slow. fix the perf.",
       "expected_output": "Refuses to jump to implementation. Classifies as complex (vague scope). Pre-phase recommends an investigative/debugging/benchmarking skill before any change. Notes that the task should be re-scoped before picking impl skills. Avoid list rejects premature impl skills."
+    },
+    {
+      "id": 6,
+      "name": "discovery-empty-scanner",
+      "prompt": "I want to build a Next.js app with auth. Please plan this out.",
+      "scanner_state": "empty (new user, no skills installed)",
+      "expected_output": "Detects empty scanner. Triggers discovery fallback. Fetches anthropics/skills + travisvn/awesome-claude-skills + hesreallyhim/awesome-claude-code READMEs. Suggests up to 3 verified candidates with install commands and source attribution. If WebFetch/WebSearch unavailable, falls through to 'proceed directly' instead of inventing suggestions."
+    },
+    {
+      "id": 7,
+      "name": "discovery-no-relevant-match",
+      "prompt": "Help me deploy this to Cloudflare Workers.",
+      "scanner_state": "non-empty but contains only unrelated skills (e.g. PDF tools, image editors)",
+      "expected_output": "Scanner returned skills but none match by keyword/role. Triggers discovery fallback. Suggests Cloudflare-relevant skills if found in the curated allow-list, with install commands. Names rejected installed skills under 'Avoid' with reason 'scope mismatch'."
     }
   ]
 }
