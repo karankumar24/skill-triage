@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 shellcheck --severity=warning
+
+  validate-skill-md:
+    name: validate SKILL.md frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check SKILL.md exists and has required frontmatter keys
+        run: |
+          set -e
+          for f in $(find skills -name 'SKILL.md'); do
+            echo "Checking $f"
+            head -1 "$f" | grep -q '^---$' || { echo "Missing opening ---"; exit 1; }
+            grep -q '^name:' "$f" || { echo "Missing name:"; exit 1; }
+            grep -q '^description:' "$f" || { echo "Missing description:"; exit 1; }
+          done
+          echo "All SKILL.md files validated."

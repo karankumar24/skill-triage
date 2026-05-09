@@ -1,5 +1,8 @@
 # skill-triage
 
+[![CI](https://github.com/karankumar24/skill-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/karankumar24/skill-triage/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 A meta-skill for [Claude Code](https://docs.claude.com/en/docs/claude-code) that picks the right installed skill for a task. Given a task it returns one structured recommendation: which skill to use, in what order, what to skip, and whether to ask before doing anything destructive.
 
 If you have a lot of Claude Code skills installed, you have probably hit this. Claude picks the first plausible-sounding skill instead of the right one. Or it chains four "for safety" when one would do. Or it skips the safety wrapper before a `DROP TABLE`. skill-triage is the part that picks.
