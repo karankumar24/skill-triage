@@ -86,6 +86,37 @@ mkdir -p "$FIXTURES/esc-fixture"
 printf -- '---\nname: esc-fixture\ndescription: "before\x1b[31mRED\x1b[0mafter"\n---\n' \
   > "$FIXTURES/esc-fixture/SKILL.md"
 
+# UTF-8 BOM (EF BB BF) at the very start of SKILL.md. Files saved by some
+# Windows editors get a BOM; the parser must strip it before frontmatter detect.
+mkdir -p "$FIXTURES/bom-fixture"
+printf -- '\xef\xbb\xbf---\nname: bom-fixture\ndescription: leading BOM must not block parsing.\n---\n' \
+  > "$FIXTURES/bom-fixture/SKILL.md"
+
+# CRLF line endings (Windows). Parser must strip \r so /^---$/ still matches.
+mkdir -p "$FIXTURES/crlf-fixture"
+printf -- '---\r\nname: crlf-fixture\r\ndescription: CRLF line endings must not block parsing.\r\n---\r\n' \
+  > "$FIXTURES/crlf-fixture/SKILL.md"
+
+# Inline YAML comment on a scalar description line: ` # ...` after the value.
+# Parser must strip the trailing comment from the value (not embed it).
+mkdir -p "$FIXTURES/comment-fixture"
+cat > "$FIXTURES/comment-fixture/SKILL.md" <<'EOF'
+---
+name: comment-fixture
+description: real description value # trailing comment must be stripped
+---
+EOF
+
+# Quoted scalar containing a literal `#` — must be preserved (YAML rule:
+# `#` inside quotes is not a comment).
+mkdir -p "$FIXTURES/quoted-hash-fixture"
+cat > "$FIXTURES/quoted-hash-fixture/SKILL.md" <<'EOF'
+---
+name: quoted-hash-fixture
+description: "value with # literal hash inside quotes"
+---
+EOF
+
 # Functional path-traversal test: build a fake plugin under the cache layout
 # that walk_plugin_root scans, with a plugin.json that tries to escape via ../.
 # The plugin.json uses single-line array form so we also confirm the inline-array
@@ -246,6 +277,33 @@ else
   printf '%s' "$esc_row" | grep -q 'before.*after' \
     && ok "ESC bytes stripped, surrounding ASCII preserved" \
     || fail "ESC sanitiser ate too much"
+fi
+
+# YAML edge cases: BOM, CRLF, inline comment, quoted-hash
+grep -E '^bom-fixture\|extra\|leading BOM' "$OUT_FILE" >/dev/null \
+  && ok "leading UTF-8 BOM stripped (bom-fixture parsed)" \
+  || fail "UTF-8 BOM blocked frontmatter parsing"
+
+grep -E '^crlf-fixture\|extra\|CRLF line endings' "$OUT_FILE" >/dev/null \
+  && ok "CRLF line endings stripped (crlf-fixture parsed)" \
+  || fail "CRLF line endings blocked frontmatter parsing"
+
+# Inline comment: description value must NOT include `# trailing comment`
+comment_row=$(awk -F'|' '/^comment-fixture\|/ { print $3 }' "$OUT_FILE")
+if printf '%s' "$comment_row" | grep -q 'trailing comment'; then
+  fail "inline YAML comment leaked into value: $comment_row"
+elif printf '%s' "$comment_row" | grep -q 'real description value'; then
+  ok "inline YAML comment stripped from unquoted scalar"
+else
+  fail "comment-fixture description empty or wrong (got: $comment_row)"
+fi
+
+# Quoted hash: `# literal hash` inside quotes must survive
+quoted_row=$(awk -F'|' '/^quoted-hash-fixture\|/ { print $3 }' "$OUT_FILE")
+if printf '%s' "$quoted_row" | grep -q 'literal hash inside quotes'; then
+  ok "literal # inside quoted scalar preserved (no false-positive comment strip)"
+else
+  fail "quoted-hash value lost: $quoted_row"
 fi
 
 # Path traversal: should-never-appear must NOT be in output.

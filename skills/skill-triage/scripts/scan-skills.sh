@@ -210,7 +210,14 @@ sanitize() {
 # (name / description / when_to_use) so awk-regex injection is not possible.
 extract_field() {
   local path="$1" field="$2"
-  LC_ALL=C awk -v field="$field" '
+  # Pre-process input so awk sees clean LF-only UTF-8 without BOM:
+  #   - sed strips a leading UTF-8 BOM (EF BB BF) on line 1
+  #   - tr -d '\r' kills CR bytes (CRLF files from Windows-edited SKILL.md)
+  # Inline comments (` # ...`) are stripped from UNQUOTED scalar values inside
+  # awk — quoted scalars keep their `#` because YAML treats it as content there.
+  LC_ALL=C sed '1s/^\xEF\xBB\xBF//' "$path" \
+    | LC_ALL=C tr -d '\r' \
+    | LC_ALL=C awk -v field="$field" '
     BEGIN { fm=0; mode=0 }
     /^---[[:space:]]*$/ { fm++; if (fm==2) exit; next }
     fm!=1 { next }
@@ -218,13 +225,16 @@ extract_field() {
       if ($0 ~ "^" field ":[[:space:]]*[|>][-+0-9]*[[:space:]]*$") { mode=1; next }
       if ($0 ~ "^" field ":") {
         sub("^" field ":[[:space:]]*","");
+        if (! ($0 ~ /^["'"'"']/)) {
+          sub(/[[:space:]]+#.*$/, "");   # strip inline YAML comment (unquoted only)
+        }
         gsub(/^["'"'"']|["'"'"']$/,"");
         print; exit
       }
       if (mode && /^[a-zA-Z_][a-zA-Z0-9_.-]*:/) { exit }
       if (mode) { gsub(/^[[:space:]]+/,""); printf "%s ", $0 }
     }
-  ' "$path"
+  '
 }
 
 emit() {

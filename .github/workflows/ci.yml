@@ -36,3 +36,15 @@ jobs:
             grep -q '^description:' "$f" || { echo "Missing description:"; exit 1; }
           done
           echo "All SKILL.md files validated."
+
+  scanner-regression:
+    name: scanner regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scanner regression suite
+        run: bash skills/skill-triage/scripts/__tests__/test_scanner.sh
