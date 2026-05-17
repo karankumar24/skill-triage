@@ -77,7 +77,11 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/skill-triage"
 mkdir -p "$CACHE_DIR"
 
 get_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+  # GNU stat first (Linux/containers — most common). BSD stat fallback (macOS).
+  # The reverse order was wrong: GNU `stat -f` means --file-system and can
+  # silently succeed on valid paths, returning multiline output that arithmetic
+  # evaluation then parses as an unbound variable reference (`File: unbound...`).
+  stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null || echo 0
 }
 
 # Build extra-roots list from env (new colon-separated form + legacy single)
@@ -128,11 +132,13 @@ watched_roots() {
 # same-count delete+add pair (codex round 3).
 disk_skill_fingerprint() {
   local r stat_args
-  # Detect BSD vs GNU stat format. BSD: stat -f <fmt>. GNU: stat -c <fmt>.
-  if stat -f %m / >/dev/null 2>&1; then
-    stat_args=(-f '%N|%z|%m')
-  else
+  # Detect GNU vs BSD stat. Try GNU `-c <fmt>` first; if rejected, use BSD `-f`.
+  # Avoid `stat -f` as a probe — on GNU it means --file-system, with surprising
+  # success semantics that break detection (the get_mtime bug, fixed above).
+  if stat -c '%Y' "$CACHE_DIR" >/dev/null 2>&1; then
     stat_args=(-c '%n|%s|%Y')
+  else
+    stat_args=(-f '%N|%z|%m')
   fi
   # `-exec stat ... {} +` won't invoke stat at all if no files match, so an
   # empty-roots install gets a clean (constant-cksum) fingerprint instead of
