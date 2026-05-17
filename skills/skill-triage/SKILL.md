@@ -1,6 +1,8 @@
 ---
 name: skill-triage
 description: Pick the right Claude Code skill for a task. Ranks installed skills, emits a routing plan, and falls back to web discovery if nothing matches. Use before non-trivial tasks (3+ steps, architectural decisions, or destructive operations).
+when_to_use: Before any 3+ step task, architectural decision, multi-skill chain, or destructive/irreversible operation. Skip for trivial one-step edits or pure lookups.
+license: Apache-2.0
 ---
 
 # Skill Triage
@@ -65,16 +67,20 @@ A "simple" task that drops a prod table is **high-risk**.
 
 ### Step 3 — Scan installed skills
 
-Run the bundled scanner. It reads SKILL.md frontmatter only (cheap), caches for 10 min, and emits one line per skill: `name|source|description`.
+Run the bundled scanner. It reads SKILL.md frontmatter only (cheap), auto-invalidates when SKILL.md / plugin.json / installed_plugins.json files change, and emits one line per skill: `name|source|description`.
 
 ```bash
-bash ~/.claude/skills/skill-triage/scripts/scan-skills.sh
+bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/skill-triage}/scripts/scan-skills.sh"
 ```
 
-Source is `personal`, `plugin:<name>`, or `project`. If a skill was just installed, pass `--refresh` to bust the cache:
+`${CLAUDE_SKILL_DIR}` is set by Claude Code to this skill's install directory, so the scanner is reachable whether the skill is installed as a personal skill (`~/.claude/skills/skill-triage/`), as a plugin (`~/.claude/plugins/cache/<mkt>/<plugin>/<ver>/skills/skill-triage/`), or via `--add-dir`. The fallback to `~/.claude/skills/skill-triage` handles environments where the variable is not set.
+
+Source is one of `personal`, `plugin:<name>`, `plugin-mkt:<marketplace>`, `project`, or `extra`. A `!disabled` suffix (e.g. `plugin:foo!disabled`) means the skill sets `disable-model-invocation: true` — Claude will not auto-invoke it; recommend it only as a user-invoke `/command`.
+
+If a skill was just installed and the file-level fingerprint hasn't caught up, pass `--refresh` to bust the cache:
 
 ```bash
-bash ~/.claude/skills/skill-triage/scripts/scan-skills.sh --refresh
+bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/skill-triage}/scripts/scan-skills.sh" --refresh
 ```
 
 ### Step 4 — Triage
@@ -106,6 +112,10 @@ After triage, check your "Relevant skills" list against this budget by complexit
 A router that lists 8 plausible skills is not routing — it is a directory dump. The user can read the directory themselves. The value is the cut.
 
 ### Step 4c — Discovery fallback (when nothing matches)
+
+**Privacy escape hatch (check first).** If `SKILL_TRIAGE_NO_DISCOVERY=1` is set
+in the environment, skip Step 4c entirely and fall through to a `proceed directly`
+verdict. Some users / managed environments disable network discovery wholesale.
 
 Trigger this step **only** when one of the following is true after Step 4b:
 
@@ -168,7 +178,9 @@ If discovery itself returns nothing usable, fall through to a plain `proceed dir
 
 If the task is **high-risk**, the verdict is **stop and ask** — even if a skill perfectly matches. Use `AskUserQuestion` with concrete options (proceed / dry-run first / abort) before doing anything irreversible. Quote the destructive command verbatim in the question.
 
-If the task is **complex** but reversible, the verdict is **proceed with skill(s)** — emit the recommendation and continue without asking.
+If the task is **complex + irreversible-strategic** (vertical pick, architecture lock-in, public launch, co-founder equity, public commitments, multi-week roadmap commits), the verdict is **stop and ask** — even though the code itself is reversible, the strategic commitment is not. Strategic decisions accrete sunk-cost momentum that's structurally hard to unwind. Use `AskUserQuestion` to confirm the routing + scope before invoking the recommended skill chain.
+
+If the task is **complex** but reversible AND non-strategic (refactor, debugging, exploration, technical investigation), the verdict is **proceed with skill(s)** — emit the recommendation and continue without asking.
 
 If **simple** or **medium** with a clear single skill, **proceed with skill(s)**.
 
@@ -234,97 +246,10 @@ If verdict is **proceed directly**, do not ask, do not invoke a skill.
 
 ## Examples
 
-> **Note.** Skill names in these examples (`writing-plans`, `careful`, `frontend-design`, `review`, `ship`, `brainstorming`) are placeholders. Substitute with whatever the scanner emits on the user's machine. If a placeholder skill is not installed, drop it from the recommendation — do not pretend it exists.
-
-### Example 1 — medium task, single skill
-
-User: "add a new column `last_login` to the users table and surface it in the profile page"
-
-```markdown
-## Routing plan
-
-**Task:** Add users.last_login column and display on profile page.
-**Complexity:** medium
-**Risk flags:** none (dev DB; migration is additive, reversible)
-
-**Relevant skills:**
-- `writing-plans` — multi-file change with schema + UI; benefits from explicit phase plan
-
-**Avoid:**
-- `ship` — premature; nothing built yet
-- `security-review` — additive non-sensitive column, no auth surface change
-
-**Recommended order:**
-1. **pre:** `/writing-plans` — break into migration + server action + UI tasks
-2. **impl:** direct edits, no skill
-3. **post:** `/review` — diff review before commit
-
-**Verdict:** proceed with skill(s)
-```
-
-### Example 2 — high-risk, stop and ask
-
-User: "drop the events table, we're not using it"
-
-```markdown
-## Routing plan
-
-**Task:** DROP TABLE events from database.
-**Complexity:** high-risk
-**Risk flags:** destructive, irreversible (no backup mentioned)
-
-**Relevant skills:**
-- `careful` — wraps destructive commands with a confirmation gate
-
-**Avoid:**
-- a generic plan-execute skill — overkill for one-line SQL; bypasses the safety conversation
-
-**Recommended order:**
-1. **pre:** verify backup exists; confirm zero readers/writers in code
-2. **impl:** `/careful` then issue DROP
-
-**Verdict:** stop and ask
-```
-
-Then immediately invoke `AskUserQuestion`: "Destructive: `DROP TABLE events;` is irreversible. Proceed?" with options: dry-run (count rows + grep references), proceed after confirming backup, abort.
-
-### Example 3 — simple, no skill
-
-User: "rename `getUser` to `fetchUser` in src/api/user.ts"
-
-```markdown
-**Routing:** No skill needed — single-file mechanical rename, fully reversible. Proceeding directly.
-```
-
-### Example 4 — complex, multi-skill chain
-
-User: "I want to ship a new dashboard page that pulls from our analytics warehouse and renders charts"
-
-```markdown
-## Routing plan
-
-**Task:** Build analytics dashboard page with warehouse-backed charts and ship it.
-**Complexity:** complex
-**Risk flags:** none (new surface, additive)
-
-**Relevant skills:**
-- `brainstorming` — scope is fuzzy ("a dashboard"); needs requirements pass first
-- `frontend-design` — distinctive UI required, not boilerplate
-- `review` — pre-merge diff review
-- `ship` — final merge + deploy step
-
-**Avoid:**
-- a second design skill — overlaps with `frontend-design`; pick one to avoid contradictory style guidance
-- an autonomous-fix QA skill on first pass — better as report-only initially
-
-**Recommended order:**
-1. **pre:** `/brainstorming` — pin down dashboard scope, charts, data shape
-2. **pre:** `/frontend-design` — design the page
-3. **impl:** direct build
-4. **post:** `/review` then `/ship`
-
-**Verdict:** proceed with skill(s)
-```
+Four worked examples (medium / high-risk / no-skill / multi-skill) live in
+[`examples/templates.md`](examples/templates.md). Open them only when you need
+a template to crib from — they're kept out of the main skill body to save
+context budget on every invocation.
 
 ## What NOT to do
 
@@ -340,12 +265,37 @@ User: "I want to ship a new dashboard page that pulls from our analytics warehou
 
 ## Bundled resources
 
-- `scripts/scan-skills.sh` — frontmatter-only scanner across personal / plugin / project skill dirs. Cached 10 min per-UID under `${XDG_CACHE_HOME:-$HOME/.cache}/skill-triage/`. Pass `--refresh` to rescan.
+- `scripts/scan-skills.sh` — frontmatter-only scanner across personal / plugin / project skill dirs. Auto-invalidates the per-UID cache (under `${XDG_CACHE_HOME:-$HOME/.cache}/skill-triage/`) when `~/.claude/plugins/installed_plugins.json`, `~/.claude/skills`, the plugin cache, or the marketplaces dir change. Pass `--refresh` to force.
+- `scripts/__tests__/test_scanner.sh` — regression test for the scanner. Run `bash scripts/__tests__/test_scanner.sh`.
+- `examples/templates.md` — four worked routing-plan examples (medium, high-risk, no-skill, multi-skill chain).
 - `examples/examples.json` — illustrative test prompts for iterating on this skill.
+
+## Privacy
+
+The discovery fallback (Step 4c) sends *scrubbed* task keywords — never raw user
+task text — to a small allow-list of GitHub raw URLs, and (as a last resort) a
+`WebSearch` query. Scrubbing drops emails, names, IDs, file paths, URLs,
+hostnames, secrets, and any quoted user data before any network call. If you
+cannot guarantee scrubbing on your platform, set `SKILL_TRIAGE_NO_DISCOVERY=1`
+to disable Step 4c entirely.
 
 ## Limitations
 
-- The scanner uses an `awk` YAML parser. It handles `description:`, `description: |`, `description: >`, and the `|-` / `>-` chomp variants, plus quoted forms. Adversarial frontmatter may still misparse — restrict to what's between the leading `---` delimiters.
-- Plugin discovery assumes the default `~/.claude/plugins/cache/<plugin>/` layout. Custom plugin install paths will not be picked up.
-- The discovery fallback sends scrubbed task keywords to GitHub raw URLs and (as a last resort) a `WebSearch` query. Raw user-task text is never sent. See SECURITY.md.
-- Linux + macOS supported. Windows untested.
+- **Plugin manifest schema is undocumented.** The scanner parses
+  `~/.claude/plugins/installed_plugins.json` to label plugin skills correctly;
+  if Anthropic changes that file's shape, the scanner falls back to a glob walk
+  of `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/` and the
+  official `${CLAUDE_PLUGIN_DATA}` path (`~/.claude/plugins/data/<id>/`).
+- **Custom skill install roots** (anything outside `~/.claude/skills`,
+  `~/.claude/plugins/{cache,data,marketplaces}`, or the project tree) must be
+  added via `SKILL_TRIAGE_EXTRA_ROOTS=<dir>:<dir>` so the scanner is portable.
+  Common power-user dirs to add: `~/.codex/skills`, `~/.claude/skill-creator`.
+- **YAML parser is awk-based.** Handles `description:` /
+  `description: |` / `description: >` (and `|-` / `>-` chomp), quoted scalars,
+  and the `when_to_use:` companion field. Frontmatter outside the leading
+  `---` delimiters is ignored. Block scalars with non-2-space indent may not
+  fold correctly — file an issue with a fixture if you hit it.
+- **Description budget = 250 chars** to match the Claude Code v2.1.86
+  `/skills` listing cap (issue #40121). Longer descriptions are truncated.
+- **Linux + macOS supported.** Windows is untested; the scanner uses POSIX
+  `find -L`, BSD/GNU `stat`, and a `bash` shebang.
