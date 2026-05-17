@@ -217,11 +217,14 @@ sanitize() {
 extract_field() {
   local path="$1" field="$2"
   # Pre-process input so awk sees clean LF-only UTF-8 without BOM:
-  #   - sed strips a leading UTF-8 BOM (EF BB BF) on line 1
+  #   - first awk strips leading UTF-8 BOM (EF BB BF) via octal substr, which
+  #     works on GNU, BSD, AND BusyBox awk (the `\xNN` hex form is rejected by
+  #     BusyBox sed/awk; octal byte literals in string comparisons are POSIX)
   #   - tr -d '\r' kills CR bytes (CRLF files from Windows-edited SKILL.md)
   # Inline comments (` # ...`) are stripped from UNQUOTED scalar values inside
-  # awk — quoted scalars keep their `#` because YAML treats it as content there.
-  LC_ALL=C sed '1s/^\xEF\xBB\xBF//' "$path" \
+  # the field-extraction awk — quoted scalars keep their `#` because YAML
+  # treats it as content there.
+  LC_ALL=C awk 'NR==1 && length($0)>=3 && substr($0,1,3)=="\357\273\277" { $0=substr($0,4) } { print }' "$path" \
     | LC_ALL=C tr -d '\r' \
     | LC_ALL=C awk -v field="$field" '
     BEGIN { fm=0; mode=0 }
