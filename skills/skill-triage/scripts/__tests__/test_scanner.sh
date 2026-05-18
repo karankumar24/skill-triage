@@ -497,6 +497,18 @@ else
   fail "--limit -5 silently accepted (no numeric guard)"
 fi
 
+# Leading-zero limit (08, 09) must NOT trip bash octal arithmetic
+oct_limit_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --limit 09 2>&1 ); echo "EXIT:$?" )
+if printf '%s' "$oct_limit_out" | grep -q "EXIT:0"; then
+  ok "--limit 09 accepted (leading-zero handled via base-10 force)"
+else
+  fail "--limit 09 broke (bash octal arithmetic regression): $oct_limit_out"
+fi
+
 echo
 echo "passed: $pass   failed: $fail"
 if (( fail > 0 )); then

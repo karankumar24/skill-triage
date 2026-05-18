@@ -80,7 +80,9 @@ while (( $# > 0 )); do
     --filter)  [[ -n "${2:-}" ]] || { echo "scan-skills.sh: --filter needs an arg" >&2; exit 2; }
                FILTERS+=("$2"); shift 2 ;;
     --limit)   [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "scan-skills.sh: --limit needs a non-negative integer" >&2; exit 2; }
-               LIMIT="$2"; shift 2 ;;
+               # Force base-10: bash arithmetic treats leading-zero numbers as
+               # octal, so --limit 08 / 09 would error inside (( LIMIT > 0 )).
+               LIMIT=$((10#$2)); shift 2 ;;
     "")        shift ;;
     *)         echo "scan-skills.sh: unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
