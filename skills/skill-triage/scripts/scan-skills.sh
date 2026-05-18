@@ -265,18 +265,16 @@ sanitize() {
 # (name / description / when_to_use) so awk-regex injection is not possible.
 extract_field() {
   local path="$1" field="$2"
-  # Pre-process input so awk sees clean LF-only UTF-8 without BOM:
-  #   - first awk strips leading UTF-8 BOM (EF BB BF) via octal substr, which
-  #     works on GNU, BSD, AND BusyBox awk (the `\xNN` hex form is rejected by
-  #     BusyBox sed/awk; octal byte literals in string comparisons are POSIX)
-  #   - tr -d '\r' kills CR bytes (CRLF files from Windows-edited SKILL.md)
-  # Inline comments (` # ...`) are stripped from UNQUOTED scalar values inside
-  # the field-extraction awk — quoted scalars keep their `#` because YAML
-  # treats it as content there.
-  LC_ALL=C awk 'NR==1 && length($0)>=3 && substr($0,1,3)=="\357\273\277" { $0=substr($0,4) } { print }' "$path" \
-    | LC_ALL=C tr -d '\r' \
-    | LC_ALL=C awk -v field="$field" '
+  # Single-pass awk: BOM strip + CRLF strip + frontmatter field extract.
+  # Earlier two-stage `awk | tr | awk` design caused SIGPIPE storms when
+  # stage-2 `exit`d after finding the field — pipefail then propagated the
+  # 141 up through `desc=$(extract_field ...)` and aborted the whole scan.
+  # Octal byte literals (`\357\273\277`) work on GNU + BSD + BusyBox awk;
+  # the `\xNN` hex form is rejected by BusyBox sed/awk.
+  LC_ALL=C awk -v field="$field" '
     BEGIN { fm=0; mode=0 }
+    NR==1 && length($0)>=3 && substr($0,1,3)=="\357\273\277" { $0=substr($0,4) }
+    { sub(/\r$/, "") }
     /^---[[:space:]]*$/ { fm++; if (fm==2) exit; next }
     fm!=1 { next }
     {
@@ -284,7 +282,7 @@ extract_field() {
       if ($0 ~ "^" field ":") {
         sub("^" field ":[[:space:]]*","");
         if (! ($0 ~ /^["'"'"']/)) {
-          sub(/[[:space:]]+#.*$/, "");   # strip inline YAML comment (unquoted only)
+          sub(/[[:space:]]+#.*$/, "");
         }
         gsub(/^["'"'"']|["'"'"']$/,"");
         print; exit
@@ -292,7 +290,7 @@ extract_field() {
       if (mode && /^[a-zA-Z_][a-zA-Z0-9_.-]*:/) { exit }
       if (mode) { gsub(/^[[:space:]]+/,""); printf "%s ", $0 }
     }
-  '
+  ' "$path"
 }
 
 emit() {
@@ -597,49 +595,16 @@ if [[ "$PRE_FP" == "$POST_FP" ]]; then
   mv -f "$TMP_OUT" "$CACHE"
   mv -f "$TMP_FP" "$CACHE_FP"
   trap - EXIT INT TERM
+  emit_cache_or_filtered
 else
   # Disk changed mid-scan. The result we have is already stale relative to
   # disk; emitting it is fine for this caller, but caching it would lock in
   # bad data for everyone else. Best-effort: emit + bail without publish.
   trap - EXIT INT TERM
-  emit_one_time() {
-    if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
-      cat "$TMP_OUT"
-    else
-      apply_output_filters "$(cat "$TMP_OUT")"
-    fi
-  }
-  emit_one_time
+  if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
+    cat "$TMP_OUT"
+  else
+    apply_output_filters "$(cat "$TMP_OUT")"
+  fi
   rm -f "$TMP_OUT"
-  exit 0
-fi
-
-# Apply --filter / --limit / --brief at output time so the cache is always
-# the full canonical scan (filtering at scan time would poison the cache for
-# the next caller who runs with different flags).
-apply_output_filters() {
-  local input="$1" f
-  # AND-filter: each --filter must match name OR description (case-insensitive)
-  for f in "${FILTERS[@]:-}"; do
-    [[ -n "$f" ]] || continue
-    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' -v kw="$f" '
-      BEGIN { kw = tolower(kw) }
-      tolower($1) ~ kw || tolower($3) ~ kw { print }
-    ')
-  done
-  # --brief: drop description column
-  if (( BRIEF == 1 )); then
-    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' '{ print $1 "|" $2 }')
-  fi
-  # --limit N: head -n N if N > 0
-  if (( LIMIT > 0 )); then
-    input=$(printf '%s\n' "$input" | head -n "$LIMIT")
-  fi
-  printf '%s\n' "$input"
-}
-
-if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
-  cat "$CACHE"
-else
-  apply_output_filters "$(cat "$CACHE")"
 fi
