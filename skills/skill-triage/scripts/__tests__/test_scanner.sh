@@ -190,6 +190,38 @@ ln -s "$WORK/canary-outside-plugin" "$SYMLINK_ATTACK/skills"
 # Symlink for adversarial fixture (runtime, not source-controlled)
 ln -s "_target" "$FIXTURES/symlinked-fixture-skill"
 
+# Fat-SKILL.md fixture: 300+ lines covering every frontmatter form +
+# multi-paragraph block-scalar description + body content past the closing
+# `---`. Exists to catch pipe-buffer timing bugs (the SIGPIPE-via-pipefail
+# class) that small fixtures silently mask. The original SIGPIPE bug
+# triggered only when awk-stage-1 was still writing past its pipe buffer
+# (~64 KB) when awk-stage-2 called `exit` after matching the field —
+# 5-line fixtures finished too fast to reproduce.
+mkdir -p "$FIXTURES/fat-fixture"
+{
+  printf -- '---\n'
+  printf -- 'name: fat-fixture\n'
+  printf -- 'description: >\n'
+  printf -- '  This fat fixture exercises pipe-buffer timing.\n\n'
+  for i in $(seq 1 60); do
+    printf -- '  Paragraph %d. Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n' "$i"
+    printf -- '  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n'
+    printf -- '  Filler line to push the file past the kernel pipe buffer (~64 KB on\n'
+    printf -- '  Linux, ~16 KB on macOS) so any awk-pipe-exit-early SIGPIPE\n'
+    printf -- '  regression manifests on this fixture instead of only in production.\n\n'
+  done
+  printf -- 'when_to_use: When you need to verify the scanner survives long inputs without SIGPIPE.\n'
+  printf -- 'argument-hint: "[anything]"\n'
+  printf -- 'allowed-tools: Bash Read\n'
+  printf -- 'license: Apache-2.0\n'
+  printf -- '---\n\n'
+  printf -- '# Fat fixture body\n\n'
+  for i in $(seq 1 200); do
+    printf -- 'Body line %d. Extra content past the frontmatter so total file size\n' "$i"
+    printf -- 'comfortably exceeds 64 KB and reproduces real-world SKILL.md scale.\n'
+  done
+} > "$FIXTURES/fat-fixture/SKILL.md"
+
 pass=0
 fail=0
 fail_msgs=()
@@ -213,11 +245,45 @@ run_scanner() {
 }
 
 echo "== run 1: --refresh with isolated env =="
-run_scanner "--refresh"
+# Capture exit code explicitly. Was previously masked by `> $OUT_FILE` only.
+# The SIGPIPE-via-pipefail bug exited 141 with empty output but the test
+# only checked output non-empty — exit code went unchecked. Now both.
+set +e
+( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+        GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM \
+        SKILL_TRIAGE_EXTRA_ROOT && \
+  HOME="$FAKE_HOME" \
+  XDG_CACHE_HOME="$WORK/cache" \
+  XDG_CONFIG_HOME="$WORK/config" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --refresh ) > "$OUT_FILE" 2>"$WORK/err.txt"
+RUN1_EXIT=$?
+set -e
+
+[[ "$RUN1_EXIT" == "0" ]] \
+  && ok "scanner --refresh exit 0 (no SIGPIPE / pipefail abort)" \
+  || fail "scanner --refresh exited $RUN1_EXIT; stderr: $(head -3 "$WORK/err.txt")"
 
 [[ -s "$OUT_FILE" ]] \
   && ok "scanner produced non-empty output ($(wc -l < "$OUT_FILE" | tr -d ' ') rows)" \
   || fail "scanner produced empty output"
+
+# Fat fixture: 64 KB+ file with 60-paragraph block-scalar description.
+# Catches pipe-buffer-timing bugs that small fixtures hide. If extract_field
+# ever regresses back to a multi-stage awk pipe with `exit`-early, this
+# fixture's size will trigger SIGPIPE on stage-1 → pipefail → script exit 141.
+grep -E '^fat-fixture\|extra\|' "$OUT_FILE" >/dev/null \
+  && ok "fat-fixture (>64 KB SKILL.md) parsed without SIGPIPE" \
+  || fail "fat-fixture missing — pipe-buffer SIGPIPE regression"
+
+# Confirm long block-scalar still gets captured (truncated at 250 char cap)
+fat_desc_len=$(awk -F'|' '/^fat-fixture\|/ { print length($3); exit }' "$OUT_FILE")
+if [[ "$fat_desc_len" == "250" ]]; then
+  ok "fat-fixture description truncated at 250-char cap"
+else
+  fail "fat-fixture description length is $fat_desc_len, expected 250"
+fi
 
 grep -E '^adversarial-fixture\|extra\|' "$OUT_FILE" >/dev/null \
   && ok "adversarial-fixture appears (symlink followed via find -L)" \
