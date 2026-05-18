@@ -3,6 +3,14 @@
 All notable changes to skill-triage are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.3] - 2026-05-17
+
+### Fixed
+- **`--limit 08` / `--limit 09` broke bash arithmetic.** The `^[0-9]+$`
+  regex accepted leading zeros, but `(( LIMIT > 0 ))` treats those as
+  octal and errors on digits 8/9. Now normalises via `LIMIT=$((10#$2))`
+  after validation so every valid integer is forced to decimal.
+
 ## [0.2.2] - 2026-05-17
 
 ### Fixed
