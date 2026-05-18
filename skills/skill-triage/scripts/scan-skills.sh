@@ -49,12 +49,18 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scan-skills.sh [--refresh] [--help]
+Usage: scan-skills.sh [--refresh] [--filter <kw>] [--limit <n>] [--brief] [--help]
 
-  --refresh    Bust the cache and rescan from disk.
-  --help, -h   Show this message.
+  --refresh        Bust the cache and rescan from disk.
+  --filter <kw>    Only emit rows whose name or description (case-insensitive)
+                   contains <kw>. Multiple --filter accepted (AND).
+  --limit <n>      Emit at most <n> rows after filtering. 0 = no limit.
+  --brief          Drop the description column. Output becomes `name|source`.
+                   Useful for cheap first-pass enumeration in token-constrained
+                   contexts (saves ~80% of output bytes).
+  --help, -h       Show this message.
 
-Emits one line per skill: name|source|description.
+Emits one line per skill: name|source|description (or name|source with --brief).
 
 Env:
   SKILL_TRIAGE_EXTRA_ROOTS=<dir>[:<dir>...]   extra scan roots (colon-separated)
@@ -63,12 +69,20 @@ EOF
 }
 
 REFRESH=0
-for arg in "$@"; do
-  case "$arg" in
+BRIEF=0
+LIMIT=0
+FILTERS=()
+while (( $# > 0 )); do
+  case "$1" in
     -h|--help) usage; exit 0 ;;
-    --refresh) REFRESH=1 ;;
-    "") ;;
-    *) echo "scan-skills.sh: unknown flag: $arg" >&2; usage >&2; exit 2 ;;
+    --refresh) REFRESH=1; shift ;;
+    --brief)   BRIEF=1; shift ;;
+    --filter)  [[ -n "${2:-}" ]] || { echo "scan-skills.sh: --filter needs an arg" >&2; exit 2; }
+               FILTERS+=("$2"); shift 2 ;;
+    --limit)   [[ -n "${2:-}" ]] || { echo "scan-skills.sh: --limit needs an arg" >&2; exit 2; }
+               LIMIT="$2"; shift 2 ;;
+    "")        shift ;;
+    *)         echo "scan-skills.sh: unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -183,8 +197,38 @@ cache_valid() {
   return 0
 }
 
+# Apply --filter / --limit / --brief at output time. Defined here (before the
+# cache-hit early-exit) so both cached and freshly-scanned paths can use it.
+# Cache always stores the full canonical scan — filtering before write would
+# poison the cache for the next caller running with different flags.
+apply_output_filters() {
+  local input="$1" f
+  for f in "${FILTERS[@]:-}"; do
+    [[ -n "$f" ]] || continue
+    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' -v kw="$f" '
+      BEGIN { kw = tolower(kw) }
+      tolower($1) ~ kw || tolower($3) ~ kw { print }
+    ')
+  done
+  if (( BRIEF == 1 )); then
+    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' '{ print $1 "|" $2 }')
+  fi
+  if (( LIMIT > 0 )); then
+    input=$(printf '%s\n' "$input" | head -n "$LIMIT")
+  fi
+  printf '%s\n' "$input"
+}
+
+emit_cache_or_filtered() {
+  if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
+    cat "$CACHE"
+  else
+    apply_output_filters "$(cat "$CACHE")"
+  fi
+}
+
 if (( REFRESH == 0 )) && cache_valid; then
-  cat "$CACHE"
+  emit_cache_or_filtered
   exit 0
 fi
 
@@ -537,4 +581,33 @@ mv -f "$TMP_OUT" "$CACHE"
 # leaves a stale fingerprint that fails the comparison on next run.
 disk_skill_fingerprint > "$CACHE_FP"
 trap - EXIT INT TERM
-cat "$CACHE"
+
+# Apply --filter / --limit / --brief at output time so the cache is always
+# the full canonical scan (filtering at scan time would poison the cache for
+# the next caller who runs with different flags).
+apply_output_filters() {
+  local input="$1" f
+  # AND-filter: each --filter must match name OR description (case-insensitive)
+  for f in "${FILTERS[@]:-}"; do
+    [[ -n "$f" ]] || continue
+    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' -v kw="$f" '
+      BEGIN { kw = tolower(kw) }
+      tolower($1) ~ kw || tolower($3) ~ kw { print }
+    ')
+  done
+  # --brief: drop description column
+  if (( BRIEF == 1 )); then
+    input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' '{ print $1 "|" $2 }')
+  fi
+  # --limit N: head -n N if N > 0
+  if (( LIMIT > 0 )); then
+    input=$(printf '%s\n' "$input" | head -n "$LIMIT")
+  fi
+  printf '%s\n' "$input"
+}
+
+if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
+  cat "$CACHE"
+else
+  apply_output_filters "$(cat "$CACHE")"
+fi

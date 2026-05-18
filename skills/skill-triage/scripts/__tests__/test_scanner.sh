@@ -403,6 +403,43 @@ else
   ok "alt run did NOT see original fixtures (cache key isolated by context)"
 fi
 
+echo "== run 8: --filter / --limit / --brief flags =="
+# --brief drops description column → exactly 2 fields per row
+brief_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --brief ) )
+brief_fields=$(printf '%s\n' "$brief_out" | head -1 | awk -F'|' '{ print NF }')
+[[ "$brief_fields" == "2" ]] \
+  && ok "--brief drops description column (got 2 fields)" \
+  || fail "--brief produced $brief_fields fields, want 2"
+
+# --filter narrows by keyword (case-insensitive). Search for "fixture" should
+# match adversarial-fixture / inline-fixture / etc., not unrelated rows.
+filter_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --filter fixture ) )
+filter_count=$(printf '%s\n' "$filter_out" | grep -c .)
+if (( filter_count > 0 )); then
+  ok "--filter narrows output ($filter_count fixture rows)"
+else
+  fail "--filter returned no rows"
+fi
+
+# --limit caps output. 1 should yield exactly 1 row.
+limit_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --limit 1 ) )
+limit_count=$(printf '%s\n' "$limit_out" | grep -c .)
+[[ "$limit_count" == "1" ]] \
+  && ok "--limit 1 yields exactly 1 row" \
+  || fail "--limit 1 yielded $limit_count rows"
+
 echo
 echo "passed: $pass   failed: $fail"
 if (( fail > 0 )); then

@@ -2,6 +2,8 @@
 name: skill-triage
 description: Pick the right Claude Code skill for a task. Ranks installed skills, emits a routing plan, and falls back to web discovery if nothing matches. Use before non-trivial tasks (3+ steps, architectural decisions, or destructive operations).
 when_to_use: Before any 3+ step task, architectural decision, multi-skill chain, or destructive/irreversible operation. Skip for trivial one-step edits or pure lookups.
+argument-hint: "[task-description]"
+allowed-tools: Bash Read WebFetch WebSearch AskUserQuestion
 license: Apache-2.0
 ---
 
@@ -82,6 +84,27 @@ If a skill was just installed and the file-level fingerprint hasn't caught up, p
 ```bash
 bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/skill-triage}/scripts/scan-skills.sh" --refresh
 ```
+
+**Token-efficient scanning.** When the user's machine has 200+ installed skills, the full scan output can run 30 KB+ — a non-trivial chunk of context. Use the output-shaping flags to keep triage cheap:
+
+```bash
+# Cheap first pass: name|source only, no descriptions (~80% smaller output).
+SCAN="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/skill-triage}/scripts/scan-skills.sh"
+bash "$SCAN" --brief
+
+# Pre-filter on the scanner side before reading any descriptions.
+bash "$SCAN" --filter "$KEYWORD"
+
+# Combine: top-N brief matches for a keyword.
+bash "$SCAN" --filter "$KEYWORD" --limit 20
+
+# Then upgrade only the 1-3 finalists to full descriptions:
+bash "$SCAN" --filter "$FINALIST_NAME"
+```
+
+Use `--brief --filter <keyword>` for the Step-4 enumeration pass, then a second
+narrow call for the 1-3 finalists. This is materially cheaper than reading the
+full scan into context.
 
 ### Step 4 — Triage
 
@@ -298,4 +321,17 @@ to disable Step 4c entirely.
 - **Description budget = 250 chars** to match the Claude Code v2.1.86
   `/skills` listing cap (issue #40121). Longer descriptions are truncated.
 - **Linux + macOS supported.** Windows is untested; the scanner uses POSIX
-  `find -L`, BSD/GNU `stat`, and a `bash` shebang.
+  `find -L`, BSD/GNU `stat`, and a `bash` shebang. CI matrix covers
+  Ubuntu, macOS (Homebrew bash 5 and `/bin/bash` 3.2), and Alpine (BusyBox).
+- **Listing budget.** Claude Code allocates ~1% of the model context window to
+  skill-listing descriptions (configurable via `skillListingBudgetFraction`
+  setting or `SLASH_COMMAND_TOOL_CHAR_BUDGET` env). Overflow drops
+  least-invoked skills' descriptions first. Run `/doctor` to inspect overflow.
+  The 250-char-per-row scanner cap is sized to fit this budget for typical
+  installs.
+
+## See also
+
+- [CHANGELOG.md](../../CHANGELOG.md) — version history
+- [SECURITY.md](../../SECURITY.md) — privacy model for the Step-4c discovery fallback
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — how to file issues / PRs

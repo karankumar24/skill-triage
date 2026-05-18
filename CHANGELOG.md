@@ -3,6 +3,32 @@
 All notable changes to skill-triage are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-05-17
+
+### Added
+- **Scanner output flags**: `--filter <kw>` (case-insensitive AND-match across
+  multiple flags), `--limit <n>`, `--brief` (drops description column for
+  ~80% smaller output). Lets the skill do a cheap brief+filter enumeration
+  pass first, then upgrade only the 1-3 finalists to full descriptions.
+- **CI matrix expanded** to four jobs: Ubuntu, macOS (Homebrew bash 5),
+  macOS (`/bin/bash` 3.2), and Alpine + BusyBox. Validates against GNU,
+  BSD, and BusyBox coreutils every push.
+- **SKILL.md frontmatter best-practice fields**: `argument-hint`,
+  `allowed-tools` (per 2026 Claude Code skill spec).
+- **SKILL.md** now links CHANGELOG.md, SECURITY.md, CONTRIBUTING.md and
+  documents the listing-budget interaction (`/doctor`,
+  `skillListingBudgetFraction`).
+
+### Fixed
+- **BusyBox awk compatibility**: BOM strip now uses an octal-substr check
+  via awk (`\357\273\277`) instead of `sed '1s/^\xEF\xBB\xBF//'`. The hex
+  form is rejected by BusyBox sed/awk; octal byte literals in string
+  comparisons are POSIX and work on GNU + BSD + BusyBox.
+- **BSD vs GNU `stat` detection**: was probing with `stat -f %m /`, which
+  has surprising success semantics on GNU (`-f` means `--file-system`).
+  Now probes with GNU `-c <fmt>` first, BSD `-f` fallback. Caught by the
+  new Ubuntu CI matrix job.
+
 ## [0.2.0] - 2026-05-17
 
 Scanner correctness, security, and OSS-portability overhaul. Originally
