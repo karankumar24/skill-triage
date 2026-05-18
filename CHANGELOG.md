@@ -3,6 +3,26 @@
 All notable changes to skill-triage are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.2] - 2026-05-17
+
+### Fixed
+- **`--filter` was regex, not substring.** The awk `~` operator treated the
+  user keyword as ERE, so `--filter 'C++'` errored on `+` and
+  `--filter '[abc]'` matched any single char. Switched to `index()` for
+  literal substring match. Docs now reflect impl.
+- **`--limit` accepted any string.** `--limit abc` tripped arithmetic
+  evaluation under `set -u`; `--limit -5` silently meant unlimited.
+  Now validated at parse time with `^[0-9]+$`.
+- **Cache publish race.** A SKILL.md edited between scan completion and
+  fingerprint write could be published with a fingerprint that already
+  reflected the edit, locking in stale content for everyone else. Now
+  takes a pre-scan AND post-scan fingerprint; only publishes the cache
+  when they match. On mismatch, emits the result to the current caller
+  but does not write the cache.
+
+### Added
+- 4 regression assertions covering all three bugs above (total 31).
+
 ## [0.2.1] - 2026-05-17
 
 ### Added
