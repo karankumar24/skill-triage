@@ -79,7 +79,7 @@ while (( $# > 0 )); do
     --brief)   BRIEF=1; shift ;;
     --filter)  [[ -n "${2:-}" ]] || { echo "scan-skills.sh: --filter needs an arg" >&2; exit 2; }
                FILTERS+=("$2"); shift 2 ;;
-    --limit)   [[ -n "${2:-}" ]] || { echo "scan-skills.sh: --limit needs an arg" >&2; exit 2; }
+    --limit)   [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "scan-skills.sh: --limit needs a non-negative integer" >&2; exit 2; }
                LIMIT="$2"; shift 2 ;;
     "")        shift ;;
     *)         echo "scan-skills.sh: unknown flag: $1" >&2; usage >&2; exit 2 ;;
@@ -205,9 +205,12 @@ apply_output_filters() {
   local input="$1" f
   for f in "${FILTERS[@]:-}"; do
     [[ -n "$f" ]] || continue
+    # index() not `~` — `~` is awk ERE, so `--filter '[abc]'` or `C++` would
+    # either error or match unintended rows. index() is literal substring,
+    # which is what the docs promise.
     input=$(printf '%s\n' "$input" | LC_ALL=C awk -F'|' -v kw="$f" '
       BEGIN { kw = tolower(kw) }
-      tolower($1) ~ kw || tolower($3) ~ kw { print }
+      { if (index(tolower($1), kw) || index(tolower($3), kw)) print }
     ')
   done
   if (( BRIEF == 1 )); then
@@ -498,6 +501,12 @@ path_seen() {
 TMP_OUT="$(mktemp "${CACHE}.XXXXXX")"
 trap 'rm -f "$TMP_OUT"' EXIT INT TERM
 
+# Pre-scan fingerprint — must match the post-scan fingerprint, otherwise a
+# SKILL.md / plugin.json / installed_plugins.json was edited DURING the scan
+# and the cache we're about to publish is already stale. In that case, emit
+# the scanned result for the current caller but do NOT publish to cache.
+PRE_FP=$(disk_skill_fingerprint)
+
 manifest="$HOME/.claude/plugins/installed_plugins.json"
 seen_plugin_paths=""
 
@@ -576,11 +585,32 @@ project_roots+=("$PWD/.claude/skills")
     { key = $1 "|" $2; if (!(key in seen)) { seen[key]=1; print } }
   ' | sort > "$TMP_OUT"
 
-mv -f "$TMP_OUT" "$CACHE"
-# Write delete-detection fingerprint AFTER cache write so a crash mid-scan
-# leaves a stale fingerprint that fails the comparison on next run.
-disk_skill_fingerprint > "$CACHE_FP"
-trap - EXIT INT TERM
+POST_FP=$(disk_skill_fingerprint)
+if [[ "$PRE_FP" == "$POST_FP" ]]; then
+  # Atomic publish: write fingerprint sidecar to a tmpfile + atomic rename
+  # so a partial-write crash can't leave the fingerprint out of sync with
+  # the cache file. Then atomic-rename the cache itself.
+  TMP_FP="$(mktemp "${CACHE_FP}.XXXXXX")"
+  printf '%s\n' "$POST_FP" > "$TMP_FP"
+  mv -f "$TMP_OUT" "$CACHE"
+  mv -f "$TMP_FP" "$CACHE_FP"
+  trap - EXIT INT TERM
+else
+  # Disk changed mid-scan. The result we have is already stale relative to
+  # disk; emitting it is fine for this caller, but caching it would lock in
+  # bad data for everyone else. Best-effort: emit + bail without publish.
+  trap - EXIT INT TERM
+  emit_one_time() {
+    if (( ${#FILTERS[@]} == 0 )) && (( BRIEF == 0 )) && (( LIMIT == 0 )); then
+      cat "$TMP_OUT"
+    else
+      apply_output_filters "$(cat "$TMP_OUT")"
+    fi
+  }
+  emit_one_time
+  rm -f "$TMP_OUT"
+  exit 0
+fi
 
 # Apply --filter / --limit / --brief at output time so the cache is always
 # the full canonical scan (filtering at scan time would poison the cache for

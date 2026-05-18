@@ -440,6 +440,63 @@ limit_count=$(printf '%s\n' "$limit_out" | grep -c .)
   && ok "--limit 1 yields exactly 1 row" \
   || fail "--limit 1 yielded $limit_count rows"
 
+echo "== run 9: --filter is literal substring, not regex =="
+# Build a fixture whose description contains literal regex metacharacters.
+# If --filter were regex (the old bug), `--filter '[a]'` would match anything
+# containing 'a' instead of only rows containing the literal '[a]'.
+mkdir -p "$FIXTURES/regex-meta-fixture"
+cat > "$FIXTURES/regex-meta-fixture/SKILL.md" <<'EOF'
+---
+name: regex-meta-fixture
+description: contains literal [bracket] and C++ tokens for substring-match test.
+---
+EOF
+# Re-scan with --refresh to pick up the new fixture
+literal_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --refresh --filter '[bracket]' ) )
+if printf '%s\n' "$literal_out" | grep -q regex-meta-fixture; then
+  ok "--filter matches literal '[bracket]' (substring, not regex)"
+else
+  fail "--filter did not match literal '[bracket]' (regex interpretation broke it)"
+fi
+
+# Plus-character (regex meta) must be matched literally
+plus_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --filter 'C++' ) )
+printf '%s\n' "$plus_out" | grep -q regex-meta-fixture \
+  && ok "--filter matches literal 'C++' (regex + char treated as substring)" \
+  || fail "--filter did not match literal 'C++'"
+
+echo "== run 10: --limit validates numeric input =="
+bad_limit_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --limit abc 2>&1 ); echo "EXIT:$?" )
+if printf '%s' "$bad_limit_out" | grep -q "EXIT:2"; then
+  ok "--limit abc rejected with exit 2"
+else
+  fail "--limit abc did not exit 2 (got: $(printf '%s' "$bad_limit_out" | tail -1))"
+fi
+
+# Negative limit also rejected
+neg_limit_out=$( ( cd "$WORK/repo" && \
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE && \
+  HOME="$FAKE_HOME" XDG_CACHE_HOME="$WORK/cache" \
+  SKILL_TRIAGE_EXTRA_ROOTS="$FIXTURES" \
+  bash "$SCANNER" --limit -5 2>&1 ); echo "EXIT:$?" )
+if printf '%s' "$neg_limit_out" | grep -q "EXIT:2"; then
+  ok "--limit -5 rejected with exit 2"
+else
+  fail "--limit -5 silently accepted (no numeric guard)"
+fi
+
 echo
 echo "passed: $pass   failed: $fail"
 if (( fail > 0 )); then
