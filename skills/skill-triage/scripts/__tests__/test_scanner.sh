@@ -74,7 +74,7 @@ printf -- '---\nname: "evil|injected\nhijacked-skill"\ndescription: hostile name
   > "$FIXTURES/hostile-name/SKILL.md"
 
 # UTF-8 fixture: em-dash (E2 80 94) and CJK char must survive sanitize intact.
-# Earlier blanket 0x80-0x9F stripping (codex round 3) corrupted UTF-8 continuation
+# Earlier blanket 0x80-0x9F stripping corrupted UTF-8 continuation
 # bytes — this fixture would have been mangled.
 mkdir -p "$FIXTURES/utf8-fixture"
 printf -- '---\nname: utf8-fixture\ndescription: "em-dash \xe2\x80\x94 and 中文 must survive sanitize"\n---\n' \
@@ -120,7 +120,7 @@ EOF
 # Functional path-traversal test: build a fake plugin under the cache layout
 # that walk_plugin_root scans, with a plugin.json that tries to escape via ../.
 # The plugin.json uses single-line array form so we also confirm the inline-array
-# parser path works (codex round 5 found it was broken).
+# parser path works (an earlier version dropped inline arrays).
 HOSTILE_PLUGIN="$FAKE_HOME/.claude/plugins/cache/testmkt/hostile/1.0.0"
 mkdir -p "$HOSTILE_PLUGIN/skills"
 cat > "$HOSTILE_PLUGIN/plugin.json" <<'EOF'
@@ -133,8 +133,8 @@ EOF
 # resolves: hostile = $FAKE_HOME/.claude/plugins/cache/testmkt/hostile/1.0.0,
 # ../../../../tmp = $FAKE_HOME/.claude/plugins/tmp. If the ../ guard were
 # removed, scanner WOULD reach this dir — so this test now genuinely proves
-# the guard works (codex round 6 noted the old path resolved to a nonexistent
-# location, making the test pass for the wrong reason).
+# the guard works (the old path resolved to a nonexistent location, which
+# made the test pass for the wrong reason).
 mkdir -p "$FAKE_HOME/.claude/plugins/tmp/canary-skill"
 cat > "$FAKE_HOME/.claude/plugins/tmp/canary-skill/SKILL.md" <<'EOF'
 ---
@@ -145,7 +145,7 @@ EOF
 
 # Symlink-trap attack: a plugin with a legitimate-looking skills/ that contains
 # a sub-symlink pointing outside the plugin root. scan_dir_confined must reject
-# SKILL.md files reachable only via that symlink (codex round 6).
+# SKILL.md files reachable only via that symlink.
 TRAP_PLUGIN="$FAKE_HOME/.claude/plugins/cache/testmkt/trap/1.0.0"
 mkdir -p "$TRAP_PLUGIN/skills/legit-skill"
 cat > "$TRAP_PLUGIN/skills/legit-skill/SKILL.md" <<'EOF'
@@ -182,7 +182,7 @@ EOF
 
 # Symlinked-skills attack: a plugin whose default `skills/` is a symlink
 # pointing outside the plugin root. The default-path canonicalisation guard
-# (codex round 2) must refuse to walk it.
+# must refuse to walk it.
 SYMLINK_ATTACK="$FAKE_HOME/.claude/plugins/cache/testmkt/symlink-attack/1.0.0"
 mkdir -p "$SYMLINK_ATTACK"
 ln -s "$WORK/canary-outside-plugin" "$SYMLINK_ATTACK/skills"
@@ -325,7 +325,7 @@ else
 fi
 
 # UTF-8 must survive sanitize: em-dash (E2 80 94) + CJK chars in description.
-# Earlier 0x80-0x9F byte stripping (codex round 3) would have corrupted these.
+# Earlier 0x80-0x9F byte stripping would have corrupted these.
 utf8_row=$(awk -F'|' '/^utf8-fixture\|/ { print $3 }' "$OUT_FILE")
 if [[ -n "$utf8_row" ]] && \
    printf '%s' "$utf8_row" | LC_ALL=en_US.UTF-8 grep -q '中文' && \

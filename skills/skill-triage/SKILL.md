@@ -257,7 +257,7 @@ If verdict is **proceed directly**, do not ask, do not invoke a skill.
 
 **Installed skills first, web second.** The default mode is to route among what the user already has. The web discovery fallback exists only because a brand-new install of skill-triage on a machine with no other skills would otherwise be useless. Discovery is the cold-start fix, not the main loop.
 
-**Don't blow context.** The scanner returns ~300 skill descriptions in a few KB. Do not `Read` every SKILL.md — only the 1-3 finalists. Progressive disclosure means triage on metadata first.
+**Don't blow context.** The scanner gives one line per skill, far less than reading each SKILL.md. Do not `Read` every SKILL.md — only the 1-3 finalists. Progressive disclosure means triage on metadata first.
 
 **Pick winners, name losers.** Listing every plausible skill is unhelpful — the user already has them listed. The value is the *judgment*: this one, not those, because X. The "Avoid" section prevents future-you from reaching for the wrong tool 10 minutes later.
 

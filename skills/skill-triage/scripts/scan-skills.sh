@@ -40,8 +40,9 @@
 # Cache validity: TTL (10 min) AND no SKILL.md / plugin.json / installed_plugins.json
 # under any watched root (personal + plugins + project + extras) is newer than
 # the cache file. File-level mtime via `find -newer -print -quit` catches
-# in-place content edits. A sidecar `${CACHE}.fp` records the SKILL.md count
-# so deletes are caught even though `find -newer` cannot see vanished files.
+# in-place content edits. A sidecar `${CACHE}.fp` records a checksum of every
+# SKILL.md's path, size and mtime, so deletes are caught even though
+# `find -newer` cannot see vanished files.
 # Cache filename is keyed on (UID, git-root or PWD, extras) so switching
 # projects or extra roots cannot reuse the wrong cache.
 
@@ -145,7 +146,7 @@ watched_roots() {
 # Encodes path + size + mtime per file, then cksum's the sorted listing.
 # Catches deletes, adds, renames, AND content edits (size/mtime drift) —
 # strictly stronger than a count-only fingerprint, which would miss a
-# same-count delete+add pair (codex round 3).
+# same-count delete+add pair.
 disk_skill_fingerprint() {
   local r stat_args
   # Detect GNU vs BSD stat. Try GNU `-c <fmt>` first; if rejected, use BSD `-f`.
@@ -171,7 +172,7 @@ disk_skill_fingerprint() {
 #   1. file exists, mtime > 0, within TTL
 #   2. no watched file (SKILL.md / plugin.json / installed_plugins.json) is
 #      newer than cache (catches adds + in-place edits)
-#   3. SKILL.md count matches the fingerprint (catches deletes)
+#   3. the SKILL.md fingerprint (path, size, mtime) still matches (catches deletes)
 cache_valid() {
   [[ -f "$CACHE" && -f "$CACHE_FP" ]] || return 1
   local cache_mtime now age
@@ -337,7 +338,7 @@ scan_dir() {
 # Like scan_dir, but per-file canonicalises every discovered SKILL.md and
 # rejects any whose resolved path falls outside $canonical_root. Required for
 # plugin scans because `find -L` will follow symlinks INSIDE the confined
-# skills/ dir, defeating the top-level confinement (codex round 6).
+# skills/ dir, defeating the top-level confinement.
 scan_dir_confined() {
   local root="$1" source="$2" canonical_root="$3"
   [[ -d "$root" ]] || return 0
@@ -390,7 +391,7 @@ emit_plugin_skill_paths() {
   #   "skills": "path"                   (string)
   #   "skills": ["a","b"]                (inline array, common case)
   #   "skills": [\n  "a",\n  "b"\n]      (multi-line array)
-  # Earlier version (codex round 5) skipped inline arrays — it `next`ed on the
+  # An earlier version skipped inline arrays — it `next`ed on the
   # opening `[` line, dropping every value. Below processes the rest of the
   # array-open line in-place, then continues into multi-line mode if needed.
   LC_ALL=C awk '
@@ -448,7 +449,7 @@ confine_to_plugin_root() {
   canonical=$(cd "$candidate" 2>/dev/null && pwd -P) || return 1
   # [[ ... == pattern ]] with the RHS quoted does literal string compare for the
   # non-glob portion. case-pattern matching is fragile if $canonical_root contains
-  # glob metacharacters like `[`, `*`, `?` (codex round 3). [[ is shell-safe.
+  # glob metacharacters like `[`, `*`, `?`. [[ is shell-safe.
   if [[ "$canonical" == "$canonical_root" || "$canonical" == "$canonical_root"/* ]]; then
     printf '%s' "$canonical"
     return 0
@@ -465,10 +466,10 @@ walk_plugin_root() {
   local canonical_root canonical
   canonical_root=$(cd "$plugin_root" 2>/dev/null && pwd -P) || return 0
 
-  # Default skills/ — must also be confined (codex round 2: symlinked skills/
-  # was previously the one unguarded path). Uses scan_dir_confined so per-file
+  # Default skills/ — must also be confined (a symlinked skills/ was once
+  # the one unguarded path). Uses scan_dir_confined so per-file
   # canonical paths are also checked — prevents a symlink trap inside skills/
-  # from escaping the plugin root via find -L (codex round 6).
+  # from escaping the plugin root via find -L.
   if [[ -d "$plugin_root/skills" ]]; then
     if canonical=$(confine_to_plugin_root "$plugin_root/skills" "$canonical_root"); then
       scan_dir_confined "$canonical" "$label" "$canonical_root"
@@ -587,9 +588,9 @@ project_roots+=("$PWD/.claude/skills")
 
 POST_FP=$(disk_skill_fingerprint)
 if [[ "$PRE_FP" == "$POST_FP" ]]; then
-  # Atomic publish: write fingerprint sidecar to a tmpfile + atomic rename
-  # so a partial-write crash can't leave the fingerprint out of sync with
-  # the cache file. Then atomic-rename the cache itself.
+  # Atomic publish: both files go to tmpfiles and are renamed into place,
+  # the cache first and the fingerprint last. A crash in between leaves the
+  # old fingerprint, which at worst forces a rescan.
   TMP_FP="$(mktemp "${CACHE_FP}.XXXXXX")"
   printf '%s\n' "$POST_FP" > "$TMP_FP"
   mv -f "$TMP_OUT" "$CACHE"

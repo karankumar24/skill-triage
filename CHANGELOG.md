@@ -3,6 +3,23 @@
 All notable changes to skill-triage are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.4] - 2026-09-23
+
+### Fixed
+- **The scanner printed no skills on a fresh scan.** `extract_field` piped
+  through a second awk that exited early, so under `set -o pipefail` the
+  pipe returned 141 and the scan stopped after the first skill. Every
+  cache miss and `--refresh` came back empty. It is now a single awk pass.
+
+### Added
+- A test fixture larger than 64 KB with an explicit exit-code check, so a
+  pipe that stops early fails the test instead of passing quietly.
+
+### Changed
+- README rewritten. SECURITY.md now points to GitHub's private
+  vulnerability reporting and matches the scanner (the four fields it
+  reads, the 250-character cap, `SKILL_TRIAGE_NO_DISCOVERY`).
+
 ## [0.2.3] - 2026-05-17
 
 ### Fixed

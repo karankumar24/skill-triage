@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email `karan.kumar24@nixorcollege.edu.pk` with `[skill-triage security]` in the subject. Please do not file a public issue for vulnerabilities; give me a chance to fix it first.
+Report it privately through GitHub: open this repository's **Security** tab and choose **Report a vulnerability**. Please do not file a public issue for vulnerabilities; give me a chance to fix it first.
 
 If you do not get a reply within 7 days, open a public issue tagging `@karankumar24`.
 
@@ -42,6 +42,7 @@ Discovery output includes a copy-paste install command that runs `git clone --de
 
 If you do not want any web calls:
 
+- Set `SKILL_TRIAGE_NO_DISCOVERY=1`. The skill then skips discovery and gives a plain `proceed directly` verdict. This is an instruction to Claude, not a hard block.
 - Disable `WebFetch` and `WebSearch` for sessions where skill-triage runs. The skill detects tool-unavailability and falls through to a plain `proceed directly` verdict.
 - Or remove the "Step 4c — Discovery fallback" section from your local copy of `SKILL.md`.
 
@@ -49,4 +50,4 @@ If you do not want any web calls:
 
 Out of scope: anyone with shell access to your account on the same machine. The cache is per-UID under your home directory, but a co-resident attacker with the same UID can read it.
 
-In scope: a malicious skill (third-party or pre-installed) cannot influence skill-triage's recommendation beyond what the YAML frontmatter parser reads, which is `name` and `description`. Both are sanitized before printing (newlines stripped, pipe characters replaced with `/`, output capped at 280 chars).
+In scope: a malicious skill (third-party or pre-installed) cannot influence skill-triage's recommendation beyond what the YAML frontmatter parser reads, which is `name`, `description`, `when_to_use` and `disable-model-invocation`. Everything printed is sanitized first (newlines flattened, control characters dropped, pipe characters replaced with `/`, capped at 250 characters).

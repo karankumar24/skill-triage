@@ -5,6 +5,7 @@ Thanks for considering a contribution. skill-triage is small on purpose — the 
 ## Before you open a PR
 
 - Run the scanner end-to-end on your machine: `bash skills/skill-triage/scripts/scan-skills.sh --refresh`. Confirm output looks sane.
+- Run the tests: `bash skills/skill-triage/scripts/__tests__/test_scanner.sh`. CI runs the same file on Ubuntu, macOS and Alpine.
 - Lint the shell script: `shellcheck skills/skill-triage/scripts/scan-skills.sh`. Address findings.
 - Re-read the SKILL.md from the top after your edit. If a new section creates a contradiction with another, fix it now, not later.
 
